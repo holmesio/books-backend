@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(mkdir -p docs/specs internal/tbr)",
+      "WebSearch"
+    ]
+  }
+}
