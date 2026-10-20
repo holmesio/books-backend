@@ -6,27 +6,39 @@ Each spec is the contract for one unit of work, usually one PR. Read a spec befo
 **For readers paralysed by too many books: narrow the pile to a few you'll actually read, keep the rest tidy, and
 never turn reading into a score.**
 
+Lifecycle: **Backlog (30) → Reading (5) → finished or DNF.** Swiping happens when a Reading slot opens.
+
 The core loop is **triage**, not discovery. Other apps help readers grow a TBR (swipe-discovery apps) or store one
 (Goodreads, StoryGraph, Hardcover). This app helps them shrink it.
 
 Principles. Check every feature against these; they are reasons to say no:
-1. **Constraints are the product.** UpNext is deliberately small. Limits are features, not missing functionality.
+1. **Constraints are the product.** Backlog and Reading are deliberately capped. Limits are features, not missing functionality.
 2. **No gamification.** No streaks, yearly goals, badges or reading stats. Reading for reading's sake.
 3. **No social layer.** No feeds, followers, likes or public reviews.
 4. **Start small and stay small.** No bulk import. Readers add books one at a time via search, so the TBR never
-   starts out overwhelming. Swiping 15 books is triage; swiping 300 is a chore.
+   starts out overwhelming. Swiping 30 books is triage; swiping 300 is a chore.
 
 ## Roadmap
 
 | Spec | What | Depends on | Status |
 |------|------|------------|--------|
-| [0001](0001-upnext.md) | UpNext queue: pure domain rules | none | draft |
-| [0002](0002-backlog.md) | Backlog + Promote: pure domain, aggregate over both lists | 0001 | stub |
-| 0003 | Postgres persistence of user state (Backlog, UpNext) | 0001, 0002 | not started |
+| [0001](0001-reading.md) | Reading: capped set of current reads, pure domain rules | none | draft |
+| [0002](0002-backlog.md) | Backlog + shelf aggregate (start, finish/DNF, history): pure domain | 0001 | stub |
+| 0003 | Postgres persistence of user state (Backlog, Reading, history) | 0001, 0002 | not started |
 | 0004 | Catalog: search an external book API, cached in Postgres (manual search is how books get in) | 0003 | not started |
 | 0005 | HTTP API for the mobile client | all above | not started |
 
-Rejected: bulk import from Goodreads/StoryGraph/Hardcover. It conflicts with principles 1 and 4 and the 15-book Backlog cap.
+Rejected: a separate UpNext queue between Backlog and Reading (one list too many for an anti-overwhelm app);
+a "pause" state (a stalled book must be finished or DNF'd). Note: with Reading at 5 the cap nudges less; see the stale-reading question in 0002.
+
+Missing: an **auth** spec, and a decision on **what client** consumes the API (mobile, thin web, CLI).
+
+Rejected (for now): community vibe/pacing checks, i.e. aggregating readers' post-read tags to show on search results.
+It needs many readers tagging the same books (no value at small scale), StoryGraph already shows community mood and pace, and
+it would require loosening principle 3. It also can't live in `tbr` (cross-user, see 0001 #1). **Reopen if** the app
+has enough active readers; if so, count only post-read tags (never predictions) and show a book's aggregate only after N readers.
+
+Rejected: bulk import from Goodreads/StoryGraph/Hardcover. It conflicts with principles 1 and 4 and the 30-book Backlog cap.
 
 Status values: `not started` → `stub` → `draft` → `accepted` (decisions frozen) → `done` (acceptance green).
 

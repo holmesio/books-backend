@@ -1,0 +1,155 @@
+# 0001: Reading
+
+Status: draft
+Package: `internal/tbr`
+Related: [0002: Backlog and the shelf](0002-backlog.md)
+
+## Goal
+Package goal (becomes `doc.go`):
+Package tbr models a reader's to-be-read queue, enforcing its invariants so callers can rely on it to pick what to read next.
+<!-- TODO(you): "queue" predates the Reading pivot. Does this sentence still describe Backlog + Reading + history? -->
+
+This spec covers `Reading`, the small, capped set of books the reader is reading right now, and the reader's `Tags`
+(vibes and pacing), which travel with each book through its lifecycle.
+
+## Scope
+- In: `Reading` and its rules (capacity, duplicates, ordering, removal, tag edits). `Tags` and their validation.
+- Out: HTTP, storage, external book APIs, users/auth. `tbr.Reading` is one user's set and knows nothing about users.
+- Out (→ 0002): the Backlog, swiping and starting a book, finish/DNF outcomes and their history.
+  `Reading.Remove` only removes. Whether that was a finish or a DNF is the coordinator's job.
+
+## Decisions
+<!-- The decisions are settled. Fill in each Why in your own words. If you can't, reopen the decision. -->
+<!-- Decision numbers are stable. Never renumber; mark moved or superseded rows instead. -->
+
+| # | Area | Decision | Why |
+|---|------|----------|-----|
+| 1 | Scope | One `Reading` = one user's set. The user→set mapping lives in a later layer | This package is only concerned with the queue mechanics and rules. User-specific logic is not necessary. |
+| 2 | Book | Required: `ID`, `Title`, `Author`. Optional: `Genre`, `PageCount`. Reader tags are not on `Book` (see #34) | Each Book needs an identifier, along with a title and author. Other fields are useful, though not required. |
+| 3 | Page count | `0` means unknown. Negative values are invalid | Books with zero pages technically do not exist. |
+| 4 | Capacity | `DefaultCapacity = 5`. `NewReading(capacity)` requires capacity > 0 | Capacity must be positive. 5 gives readers flexibility while still being a hard cap (raised from 3 after 15/3 felt too tight in practice). |
+| 5 | Overflow | `Add` on a full set returns `ErrReadingFull`. The set is unchanged | Never silently lose a book the user chose. |
+| 6 | Duplicates | Identity is `Book.ID`. A repeat ID returns `ErrDuplicate` | Prevents duplicate entries on return. Book.ID is opaque; spec 0004 decides where it comes from. |
+| 7 | Add check order | validate (book, then tags) → duplicate → full | Package should confirm the book exists, check the list for duplicates, then ensure the list can add a new book. |
+| 8 | Ordering | `List` returns items in insertion order (the order they were started) | TODO(you): the old Why ("Up Next" nature) no longer applies. Is the order still meaningful, or only deterministic for tests and UI? |
+| 9 | Removal | `Remove` of an ID that isn't in the set returns `ErrNotFound` | Book cannot be removed that does not exist in queue. |
+| 10–12 | Filtering | Moved to [0002](0002-backlog.md) | |
+| 13 | Concurrency | `Reading` guards itself with a `sync.Mutex`. `List` returns a copy | Concurrent requests can't break invariants; copies keep callers from mutating or racing on internal state. |
+| 14 | Invalid input | `NewReading(capacity <= 0)`: return an error | Capacities should be positive. |
+| 21 | UpNext dropped | `Reading` replaces `UpNext`. The lifecycle is Backlog → Reading → finished/DNF | TODO(you) |
+| 25 | Tag values | (moved from 0002) A fixed list of string-backed constants, also enumerated by `Vibes()` / `Pacings()` (copies of unexported lists). Unknown values return `ErrInvalidVibe` / `ErrInvalidPacing`. Adding a vibe is a code change in two places, guarded by a test | TODO |
+| 26 | Vibe limits | (moved from 0002) At most `MaxVibes = 3` per book. No repeated vibes. Too many returns `ErrTooManyVibes` | TODO |
+| 34 | Tags travel | A book's `Tags` are held by whatever holds the book. In Reading that's `Item{Book, Tags}`. There's no separate tag store, so removing a book removes its tags | Tags are how the reader sees *this book*, so they go wherever the book goes. Cleanup is automatic. TODO(you): refine |
+| 35 | Tag edits | `SetTags(id, t)` replaces a book's tags while it's in Reading. Same validation as `Add`. `ErrNotFound` if absent | Readers can update their vibe check at any time (0002 #33) |
+| 36 | No aliasing | `Tags` contains a slice, so it is cloned at every boundary: stored as `t.Clone()` on the way in (`Add`, `SetTags`), returned as clones on the way out (`List`) | Otherwise a caller holding the slice could change stored tags after validation. `-race` can't catch this; only tests can |
+
+## Public API
+```go
+type Book struct {
+	ID, Title, Author string // required
+	Genre             string // optional; catalog data
+	PageCount         int    // optional; 0 = unknown
+}
+
+type Vibe string // the fixed list is TODO(you); a few placeholders are enough to start
+
+const (
+	Cozy Vibe = "cozy"
+	Dark Vibe = "dark"
+	// ...
+)
+
+type Pacing string // "" = not tagged yet
+
+const (
+	SlowBurn  Pacing = "slow-burn"
+	Medium    Pacing = "medium"
+	FastPaced Pacing = "fast-paced"
+)
+
+// Go can't iterate constants, so the allowed values are also listed. Unexported, because Go has no constant
+// slices and an exported var could be modified by any importer. A new constant must be added here too.
+var (
+	allVibes   = []Vibe{Cozy, Dark /* ... */}
+	allPacings = []Pacing{SlowBurn, Medium, FastPaced}
+)
+
+func Vibes() []Vibe     // returns a copy; used by Validate and by clients listing the options
+func Pacings() []Pacing // returns a copy
+
+// Tags are this reader's vibes and pacing for one book. The zero value (no tags) is valid.
+// If Tags gains another reference type (map, pointer, nested slice), Clone must be updated too.
+type Tags struct {
+	Vibes  []Vibe
+	Pacing Pacing
+}
+
+func (t Tags) Validate() error // #25, #26
+func (t Tags) Clone() Tags     // new backing array for Vibes
+
+// Item is one book as it sits in Reading.
+type Item struct {
+	Book Book
+	Tags Tags
+}
+
+const (
+	DefaultCapacity = 5
+	MaxVibes        = 3
+)
+
+var (
+	ErrReadingFull   = errors.New("tbr: reading is full")
+	ErrDuplicate     = errors.New("tbr: duplicate book")
+	ErrNotFound      = errors.New("tbr: book not found")
+	ErrInvalidBook   = errors.New("tbr: invalid book")
+	ErrInvalidVibe   = errors.New("tbr: invalid vibe")
+	ErrInvalidPacing = errors.New("tbr: invalid pacing")
+	ErrTooManyVibes  = errors.New("tbr: too many vibes")
+)
+
+func NewReading(capacity int) (*Reading, error)
+func (r *Reading) Add(b Book, t Tags) error
+func (r *Reading) SetTags(id string, t Tags) error
+func (r *Reading) Remove(id string) error
+func (r *Reading) List() []Item // each Item's Tags cloned
+```
+
+## Behaviors → tests
+<!-- TODO(you): list case names for each table before writing any Go. -->
+
+### TestVibesAndPacings
+- 
+<!-- Include: every constant appears in Vibes()/Pacings(); mutating a returned slice doesn't affect the next call. -->
+
+### TestTags_Validate
+- 
+
+### TestTags_Clone
+- 
+
+### TestNewReading
+- 
+
+### TestReading_Add
+- 
+<!-- Include: mutating the caller's Vibes slice after Add doesn't change the stored tags (#36). -->
+
+### TestReading_SetTags
+- 
+
+### TestReading_Remove
+- 
+
+### TestReading_List
+- 
+<!-- Include: mutating a returned Item's Vibes doesn't change what the next List returns (#36). -->
+
+### TestReading_Concurrent
+- 
+
+## Acceptance
+- [ ] Every behavior above has a table-driven test in `package tbr_test`
+- [ ] `gofmt -l .` prints nothing
+- [ ] `go vet ./...` is clean
+- [ ] `go test -race -count=1 ./...` passes
