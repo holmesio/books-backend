@@ -8,6 +8,8 @@ Go backend for a Books API (future mobile client). Built spec-first: specs in `d
 - Before touching a package, read its spec. Decisions marked in a spec are settled. If one seems wrong, raise it;
   don't silently change it.
 - Tests come before implementation. Table-driven, black-box (`package <name>_test`), one table per behavior.
+- Work in small red→green loops: name one table's cases in the spec, write that table, watch it fail, implement,
+  then move on to the next table. Don't name every case for the whole spec up front.
 
 ## Layout
 - Start at `docs/specs/README.md` for the roadmap and architecture rules.
